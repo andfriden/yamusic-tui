@@ -51,8 +51,6 @@ const (
 	_VOLUME_FADE_PERIOD    = 60 * time.Millisecond
 )
 
-var rewindAmount = time.Duration(config.Current.RewindDuration) * time.Second
-
 type Model struct {
 	width      int
 	track      api.Track
@@ -72,6 +70,7 @@ type Model struct {
 	volume         float64
 	volumeIncremet float64
 	lastVolumeKey  time.Time
+	rewindAmount   time.Duration
 	playerContext  *oto.Context
 	player         *oto.Player
 	trackWrapper   *readWrapper
@@ -94,6 +93,7 @@ func New(p *tea.Program, likesMap *map[string]bool) *Model {
 	}
 
 	m.volumeIncremet = m.volume / _VOLUME_FADE_STEPS
+	m.rewindAmount = time.Duration(config.Current.RewindDuration) * time.Second
 
 	m.progress.ShowPercentage = false
 	m.progress.Empty = m.progress.Full
@@ -264,11 +264,11 @@ func (m *Model) Update(message tea.Msg) (*Model, tea.Cmd) {
 			}
 
 		case controls.PlayerRewindForward.Contains(keypress):
-			cmd = m.Rewind(rewindAmount)
+			cmd = m.Rewind(m.rewindAmount)
 			cmds = append(cmds, cmd, model.Cmd(REWIND))
 
 		case controls.PlayerRewindBackward.Contains(keypress):
-			cmd = m.Rewind(-rewindAmount)
+			cmd = m.Rewind(-m.rewindAmount)
 			cmds = append(cmds, cmd, model.Cmd(REWIND))
 
 		case controls.PlayerNext.Contains(keypress):
