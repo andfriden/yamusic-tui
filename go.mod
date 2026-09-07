@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.4
 	github.com/charmbracelet/lipgloss v1.0.0
 	github.com/dece2183/go-clipboard v1.0.0
-	github.com/dece2183/go-stream-mp3 v1.0.1
+	github.com/dece2183/go-stream-mp3 v1.0.2
 	github.com/dece2183/media-winrt-go v0.0.0-20250304161442-46653f733234
 	github.com/ebitengine/oto/v3 v3.3.2
 	github.com/go-ole/go-ole v1.3.0
