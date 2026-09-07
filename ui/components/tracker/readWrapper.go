@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	_PROGRESS_UPDATE_PERIOD = 33 * time.Millisecond
+	_PROGRESS_UPDATE_PERIOD = 850 * time.Millisecond
 )
 
 type readWrapper struct {

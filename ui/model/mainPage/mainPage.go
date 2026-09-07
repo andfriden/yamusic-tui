@@ -43,6 +43,7 @@ type Model struct {
 	isPlaylistHideOverride bool
 
 	playQueue            []api.Track
+	playQueueTrackIndex  int
 	currentPlaylistIndex int
 	currentAlbumIndex    int
 
@@ -148,13 +149,19 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg {
 		case playlist.CURSOR_UP, playlist.CURSOR_DOWN:
 			selectedPlaylist := m.playlists.SelectedItem()
+			if selectedPlaylist == nil {
+				break
+			}
 
-			if m.currentPlaylistIndex >= 0 {
-				currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
+			items := m.playlists.Items()
+			if m.currentPlaylistIndex >= 0 && m.currentPlaylistIndex < len(items) {
+				currentPlaylist := items[m.currentPlaylistIndex]
 				if selectedPlaylist.IsSame(currentPlaylist) && len(selectedPlaylist.Tracks) > 0 && m.currentAlbumIndex == selectedPlaylist.SelectedAlbum {
 					selectedPlaylist.SelectedTrack = selectedPlaylist.CurrentTrack
 					m.playlists.SetItem(m.playlists.Index(), selectedPlaylist)
 				}
+			} else {
+				m.currentPlaylistIndex = -1
 			}
 
 			m.displayPlaylist(selectedPlaylist)

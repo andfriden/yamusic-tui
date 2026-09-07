@@ -197,6 +197,8 @@ func (m *Model) removeFromPlaylist(pl *playlist.Item, index int) tea.Cmd {
 			currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
 			if pl.IsSame(currentPlaylist) && m.tracker.IsPlaying() {
 				m.indicateCurrentTrackPlaying(!deleteCurrentTrack)
+				m.currentPlaylistIndex = -1
+				m.currentAlbumIndex = -1
 			}
 		}
 

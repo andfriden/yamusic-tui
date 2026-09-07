@@ -60,8 +60,12 @@ func (m *Model) displaySearchResults(res api.SearchResult, searchConfig *config.
 	searchResIndex := len(playlists) + 2
 	for i, pl := range playlists {
 		if !pl.Active && !pl.Subitem && pl.Name == "search results:" {
-			playlists = playlists[:i-1]
 			searchResIndex = i + 1
+			if m.currentPlaylistIndex > searchResIndex {
+				m.currentPlaylistIndex = -1
+				m.currentAlbumIndex = -1
+			}
+			playlists = playlists[:i-1]
 			break
 		}
 	}

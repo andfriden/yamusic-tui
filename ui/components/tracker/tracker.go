@@ -48,6 +48,7 @@ func (p ProgressControl) Value() float64 {
 const (
 	_VOLUME_FADE_STEPS     = 2
 	_VOLUME_SNAP_THRESHOLD = 0.005 // snap to 0/1 when close enough
+	_VOLUME_FADE_PERIOD    = 60 * time.Millisecond
 )
 
 var rewindAmount = time.Duration(config.Current.RewindDuration) * time.Second
@@ -123,6 +124,7 @@ func New(p *tea.Program, likesMap *map[string]bool) *Model {
 	}
 	<-readyChan
 
+	go m.volumeFader()
 	return m
 }
 
@@ -313,7 +315,6 @@ func (m *Model) Update(message tea.Msg) (*Model, tea.Cmd) {
 
 	// track progress update
 	case ProgressControl:
-		m.volumeFadeTick()
 		cmd = m.progress.SetPercent(msg.Value())
 		cmds = append(cmds, cmd)
 
@@ -560,6 +561,13 @@ func (m *Model) volumeFadeTick() {
 		if m.paused {
 			m.player.Pause()
 		}
+	}
+}
+
+func (m *Model) volumeFader() {
+	t := time.NewTicker(_VOLUME_FADE_PERIOD)
+	for range t.C {
+		m.volumeFadeTick()
 	}
 }
 

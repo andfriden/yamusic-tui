@@ -75,94 +75,89 @@ func (m *Model) rotateTracks(pl *playlist.Item) {
 }
 
 func (m *Model) prevTrack() {
-	if m.currentPlaylistIndex < 0 {
-		return
-	}
-
-	currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
-	if currentPlaylist.Rotor && m.tracker.IsPlaying() {
-		go m.client.RotorSessionFeedback(currentPlaylist.SessionId, m.feedbackOnTrack(currentPlaylist.SessionBatch))
-	}
-
-	if len(m.playQueue) == 0 || currentPlaylist.CurrentTrack == 0 {
+	if len(m.playQueue) == 0 || m.playQueueTrackIndex == 0 {
 		m.Send(tracker.STOP)
 		return
 	}
 
-	selectedPlaylist := m.playlists.SelectedItem()
-	shouldFollow := currentPlaylist.IsSame(selectedPlaylist) && m.tracklist.Index() == currentPlaylist.CurrentTrack
-
-	m.indicateCurrentTrackPlaying(false)
-
-	currentPlaylist.CurrentTrack--
-	for currentPlaylist.CurrentTrack > 0 && !m.playQueue[currentPlaylist.CurrentTrack].Available {
-		currentPlaylist.CurrentTrack--
+	m.playQueueTrackIndex--
+	for m.playQueueTrackIndex > 0 && !m.playQueue[m.playQueueTrackIndex].Available {
+		m.playQueueTrackIndex--
 	}
 
-	m.playlists.SetItem(m.currentPlaylistIndex, currentPlaylist)
-	track := &m.playQueue[currentPlaylist.CurrentTrack]
+	if m.currentPlaylistIndex >= 0 {
+		m.indicateCurrentTrackPlaying(false)
+		currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
+		if currentPlaylist.Rotor && m.tracker.IsPlaying() {
+			go m.client.RotorSessionFeedback(currentPlaylist.SessionId, m.feedbackOnTrack(currentPlaylist.SessionBatch))
+		}
+
+		selectedPlaylist := m.playlists.SelectedItem()
+		shouldFollow := currentPlaylist.IsSame(selectedPlaylist) && m.tracklist.Index() == currentPlaylist.CurrentTrack
+		currentPlaylist.CurrentTrack = m.playQueueTrackIndex
+		if shouldFollow {
+			m.tracklist.Select(currentPlaylist.CurrentTrack)
+			currentPlaylist.SelectedTrack = currentPlaylist.CurrentTrack
+		}
+
+		m.playlists.SetItem(m.currentPlaylistIndex, currentPlaylist)
+	}
+
+	track := &m.playQueue[m.playQueueTrackIndex]
 	if !track.Available {
 		m.Send(tracker.STOP)
 		return
 	}
 
 	m.playTrack(track)
-	if shouldFollow {
-		m.tracklist.Select(currentPlaylist.CurrentTrack)
-		currentPlaylist.SelectedTrack = currentPlaylist.CurrentTrack
-		m.playlists.SetItem(m.currentPlaylistIndex, currentPlaylist)
-	}
 }
 
 func (m *Model) nextTrack() {
-	if m.currentPlaylistIndex < 0 {
-		return
-	}
-
-	currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
-	if currentPlaylist.Rotor && m.tracker.IsPlaying() {
-		go m.client.RotorSessionFeedback(currentPlaylist.SessionId, m.feedbackOnTrack(currentPlaylist.SessionBatch))
-	}
-
 	if len(m.playQueue) == 0 {
 		m.Send(tracker.STOP)
 		return
 	}
 
-	m.indicateCurrentTrackPlaying(false)
+	m.playQueueTrackIndex++
+	for m.playQueueTrackIndex < len(m.playQueue)-1 && !m.playQueue[m.playQueueTrackIndex].Available {
+		m.playQueueTrackIndex++
+	}
 
-	if currentPlaylist.CurrentTrack+1 >= len(m.playQueue) {
-		currentPlaylist.CurrentTrack = 0
+	if m.currentPlaylistIndex >= 0 {
+		m.indicateCurrentTrackPlaying(false)
+		currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
+		if currentPlaylist.Rotor && m.tracker.IsPlaying() {
+			go m.client.RotorSessionFeedback(currentPlaylist.SessionId, m.feedbackOnTrack(currentPlaylist.SessionBatch))
+		}
+
+		selectedPlaylist := m.playlists.SelectedItem()
+		shouldFollow := currentPlaylist.IsSame(selectedPlaylist) && m.tracklist.Index() == currentPlaylist.CurrentTrack
+		currentPlaylist.CurrentTrack = m.playQueueTrackIndex
+		if shouldFollow {
+			m.tracklist.Select(currentPlaylist.CurrentTrack)
+			currentPlaylist.SelectedTrack = currentPlaylist.CurrentTrack
+		}
+
+		if currentPlaylist.CurrentTrack == len(m.playQueue)-1 {
+			m.rotateTracks(currentPlaylist)
+		}
+
 		m.playlists.SetItem(m.currentPlaylistIndex, currentPlaylist)
+	}
+
+	if m.playQueueTrackIndex >= len(m.playQueue) {
+		m.playQueueTrackIndex = 0
 		m.Send(tracker.STOP)
 		return
 	}
 
-	selectedPlaylist := m.playlists.SelectedItem()
-	shouldFollow := currentPlaylist.IsSame(selectedPlaylist) && m.tracklist.Index() == currentPlaylist.CurrentTrack
-
-	currentPlaylist.CurrentTrack++
-	for currentPlaylist.CurrentTrack < len(m.playQueue)-1 && !m.playQueue[currentPlaylist.CurrentTrack].Available {
-		currentPlaylist.CurrentTrack++
-	}
-
-	m.playlists.SetItem(m.currentPlaylistIndex, currentPlaylist)
-	track := &m.playQueue[currentPlaylist.CurrentTrack]
+	track := &m.playQueue[m.playQueueTrackIndex]
 	if !track.Available {
 		m.Send(tracker.STOP)
 		return
 	}
 
-	if currentPlaylist.CurrentTrack == len(m.playQueue)-1 {
-		m.rotateTracks(currentPlaylist)
-	}
-
 	m.playTrack(track)
-	if shouldFollow {
-		m.tracklist.Select(currentPlaylist.CurrentTrack)
-		currentPlaylist.SelectedTrack = currentPlaylist.CurrentTrack
-		m.playlists.SetItem(m.currentPlaylistIndex, currentPlaylist)
-	}
 }
 
 func (m *Model) playTrack(track *api.Track) {
@@ -331,7 +326,7 @@ func (m *Model) playTrack(track *api.Track) {
 
 func (m *Model) playSelectedPlaylist(trackIndex int) {
 	selectedPlaylist := m.playlists.SelectedItem()
-	if len(selectedPlaylist.Tracks) == 0 {
+	if len(selectedPlaylist.Tracks) == 0 || selectedPlaylist.SelectedTrack < 0 || selectedPlaylist.SelectedTrack >= len(selectedPlaylist.Tracks) {
 		m.Send(tracker.STOP)
 		return
 	}
@@ -385,5 +380,6 @@ func (m *Model) playSelectedPlaylist(trackIndex int) {
 	m.currentPlaylistIndex = m.playlists.Index()
 	m.playlists.SetItem(m.currentPlaylistIndex, selectedPlaylist)
 	m.playQueue = selectedPlaylist.Tracks
+	m.playQueueTrackIndex = trackIndex
 	m.playTrack(trackToPlay)
 }
