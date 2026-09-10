@@ -68,7 +68,7 @@ func (m *Model) addPlaylistControl(msg search.Control) tea.Cmd {
 			if foundPlaylistIndex < m.playlists.Index() {
 				m.playlists.Select(m.playlists.Index() + 1)
 			}
-			if m.currentPlaylistIndex >= m.playlists.Index() && m.tracker.IsPlaying() {
+			if m.currentPlaylistIndex >= m.playlists.Index() {
 				m.currentPlaylistIndex += 1
 			}
 		}
@@ -88,6 +88,12 @@ func (m *Model) addPlaylistControl(msg search.Control) tea.Cmd {
 		foundPlaylist.Revision = pl.Revision
 		foundPlaylist.Tracks = append(foundPlaylist.Tracks, *selectedTrack)
 		cmd = m.playlists.SetItem(foundPlaylistIndex, foundPlaylist)
+
+		if m.currentPlaylistIndex >= 0 && foundPlaylist.IsSame(m.playlists.Items()[m.currentPlaylistIndex]) {
+			m.playQueue = foundPlaylist.Tracks
+			m.playQueueTrackIndex = foundPlaylist.CurrentTrack
+			m.indicateCurrentTrackPlaying(m.tracker.IsPlaying())
+		}
 
 		m.isAddPlaylistActive = false
 	case search.CANCEL:
@@ -159,7 +165,7 @@ func (m *Model) removeFromPlaylist(pl *playlist.Item, index int) tea.Cmd {
 				m.tracker.ShowError("playlist remove")
 				return nil
 			}
-			if m.currentPlaylistIndex >= m.playlists.Index() && m.tracker.IsPlaying() {
+			if m.currentPlaylistIndex >= m.playlists.Index() {
 				m.currentPlaylistIndex -= 1
 			}
 			m.playlists.RemoveItem(m.playlists.Index())
@@ -186,19 +192,19 @@ func (m *Model) removeFromPlaylist(pl *playlist.Item, index int) tea.Cmd {
 		}
 		deleteCurrentTrack := index == pl.CurrentTrack
 		if deleteCurrentTrack {
-			pl.CurrentTrack = len(pl.Tracks)
+			pl.CurrentTrack = -1
 		} else if pl.CurrentTrack > index {
 			pl.CurrentTrack--
 		}
 		cmd = m.playlists.SetItem(m.playlists.Index(), pl)
 		m.displayPlaylist(pl)
 
-		if m.currentPlaylistIndex >= 0 {
-			currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
-			if pl.IsSame(currentPlaylist) && m.tracker.IsPlaying() {
-				m.indicateCurrentTrackPlaying(!deleteCurrentTrack)
-				m.currentPlaylistIndex = -1
-				m.currentAlbumIndex = -1
+		if m.currentPlaylistIndex >= 0 && pl.IsSame(m.playlists.Items()[m.currentPlaylistIndex]) {
+			m.playQueue = pl.Tracks
+			if deleteCurrentTrack {
+				m.playQueueTrackIndex -= 1
+			} else {
+				m.playQueueTrackIndex = pl.CurrentTrack
 			}
 		}
 
@@ -227,7 +233,7 @@ func (m *Model) shufflePlaylist(pl *playlist.Item) tea.Cmd {
 		if currentTrack.Id == tracks[v].Id {
 			currentTrackIndex = v
 		}
-		if selectedTrackIndex > 0 && selectedTrack.Id == tracks[v].Id {
+		if selectedTrackIndex >= 0 && selectedTrack.Id == tracks[v].Id {
 			selectedTrackIndex = v
 		}
 	}
@@ -239,12 +245,10 @@ func (m *Model) shufflePlaylist(pl *playlist.Item) tea.Cmd {
 	cmds = append(cmds, m.tracklist.SetItems(trackList))
 	m.tracklist.Select(selectedTrackIndex)
 
-	if m.currentPlaylistIndex >= 0 {
-		currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
-		if pl.IsSame(currentPlaylist) && m.tracker.IsPlaying() {
-			m.playQueue = pl.Tracks
-			m.indicateCurrentTrackPlaying(true)
-		}
+	if m.currentPlaylistIndex >= 0 && pl.IsSame(m.playlists.Items()[m.currentPlaylistIndex]) {
+		m.playQueue = pl.Tracks
+		m.playQueueTrackIndex = pl.CurrentTrack
+		m.indicateCurrentTrackPlaying(m.tracker.IsPlaying())
 	}
 
 	return tea.Batch(cmds...)
@@ -339,7 +343,7 @@ func (m *Model) indicateCurrentTrackPlaying(playing bool) {
 	}
 
 	currentPlaylist := m.playlists.Items()[m.currentPlaylistIndex]
-	if !currentPlaylist.IsSame(m.playlists.SelectedItem()) {
+	if !currentPlaylist.IsSame(m.playlists.SelectedItem()) || currentPlaylist.CurrentTrack < 0 {
 		return
 	}
 
