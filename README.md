@@ -169,7 +169,9 @@ values are used unchanged.
 
 ### Radio configuration
 
-Select **my wave** in the sidebar and press `c` (`station-config` in the
+The sidebar lists radio stations under the **radio:** section, plus **my wave**.
+Press **enter** on a station to start its rotation (the session starts lazily on
+first play). Select a station or my wave and press `c` (`station-config` in the
 controls) to open the station settings dialog. You can adjust four rotor
 station parameters:
 
@@ -193,6 +195,8 @@ radio:
       diversity: high
       mood: 0.5
       energy: 0.25
+   'genre:rock': # any station, keyed by its "type:tag" id
+      language: not-russian
    default: # applies to every station without its own block
       language: not-russian
 ```

@@ -314,6 +314,8 @@ func (m *Model) displayPlaylist(pl *playlist.Item) {
 	switch pl.Kind {
 	case playlist.MYWAVE:
 		m.tracklist.Title = "My wave"
+	case playlist.STATION:
+		m.tracklist.Title = "Radio: " + pl.Name
 	case playlist.LIKES:
 		m.tracklist.Title = "Liked tracks"
 	case playlist.LOCAL:

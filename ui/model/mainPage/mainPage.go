@@ -24,6 +24,14 @@ import (
 	"github.com/dece2183/go-clipboard"
 )
 
+// stationStartedMsg carries the result of lazily starting a radio station's
+// rotor session (done on first play).
+type stationStartedMsg struct {
+	stationId api.StationId
+	tracks    api.StationTracks
+	err       error
+}
+
 type Model struct {
 	program       *tea.Program
 	client        *api.YaMusicClient
@@ -51,6 +59,8 @@ type Model struct {
 	currentPlaylistIndex int
 	currentAlbumIndex    int
 
+	startingStations map[api.StationId]bool
+
 	likedTracksMap  map[string]bool
 	cachedTracksMap map[string]bool
 }
@@ -65,6 +75,7 @@ func New(mediaHandler handler.MediaHandler) *Model {
 	m.mediaHandler = mediaHandler
 	m.likedTracksMap = make(map[string]bool)
 	m.cachedTracksMap = make(map[string]bool)
+	m.startingStations = make(map[api.StationId]bool)
 	m.spinner = spinner.New(spinner.WithSpinner(spinner.Points))
 	m.playlists = playlist.New(m.program, "YaMusic")
 	m.tracklist = tracklist.New(m.program, &m.likedTracksMap, &m.cachedTracksMap)
@@ -111,6 +122,44 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case LoadingMsg:
 		m.isLoading = false
 		return m, model.Cmd(playlist.CURSOR_UP)
+
+	case stationStartedMsg:
+		delete(m.startingStations, msg.stationId)
+		if msg.err != nil {
+			log.Print(log.LVL_ERROR, "failed to start station: %s", msg.err)
+			m.tracker.ShowError("station start")
+			break
+		}
+		if len(msg.tracks.Sequence) == 0 {
+			m.tracker.ShowError("empty station")
+			break
+		}
+
+		var st *playlist.Item
+		idx := -1
+		for i, it := range m.playlists.Items() {
+			if it.StationId == msg.stationId {
+				st = it
+				idx = i
+				break
+			}
+		}
+		if st == nil {
+			break
+		}
+
+		st.SessionId = msg.tracks.RadioSessionId
+		st.SessionBatch = msg.tracks.BatchId
+		st.Tracks = []api.Track{msg.tracks.Sequence[0].Track}
+		st.CurrentTrack = 0
+		st.SelectedTrack = 0
+		m.playlists.SetItem(idx, st)
+
+		// Auto-play if the user is still pointing at this station.
+		if m.playlists.SelectedItem() == st {
+			m.displayPlaylist(st)
+			m.playSelectedPlaylist(0)
+		}
 
 	case tea.WindowSizeMsg:
 		m.resize(msg.Width, msg.Height)
@@ -188,9 +237,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.isPlaylistHideOverride = !m.isPlaylistHideOverride
 		case playlist.STATION_CONFIG:
 			sel := m.playlists.SelectedItem()
-			// Radio settings apply to My Wave (the rotor station the original
-			// client supports). Non-rotor entries have no radio settings.
-			if sel == nil || sel.Kind != playlist.MYWAVE {
+			// Radio settings apply to radio stations and My Wave. Non-rotor
+			// entries have no radio settings.
+			if sel == nil || (sel.Kind != playlist.STATION && sel.Kind != playlist.MYWAVE) {
 				break
 			}
 			m.radioDialog = radioconfig.New(sel.StationId.String())
@@ -227,6 +276,15 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tracklist.PLAY:
 			playlistItem := m.playlists.SelectedItem()
 			if !playlistItem.Active {
+				break
+			}
+			if playlistItem.Kind == playlist.STATION && playlistItem.SessionId == "" {
+				// First play of this station — start its rotor session, then
+				// stationStartedMsg fills the first track and plays it.
+				if !m.startingStations[playlistItem.StationId] {
+					m.startingStations[playlistItem.StationId] = true
+					cmds = append(cmds, m.startStation(playlistItem.StationId))
+				}
 				break
 			}
 			if m.albumListActive() {

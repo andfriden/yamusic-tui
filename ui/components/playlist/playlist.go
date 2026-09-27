@@ -30,6 +30,7 @@ const (
 	LIKES
 	LOCAL
 	ALBUMS
+	STATION
 	// Should be the last to detect downloaded user playlists
 	USER
 )

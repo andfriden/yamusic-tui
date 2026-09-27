@@ -3,6 +3,8 @@ package mainpage
 import (
 	"errors"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 
 	"github.com/dece2183/yamusic-tui/api"
@@ -10,6 +12,8 @@ import (
 	"github.com/dece2183/yamusic-tui/config"
 	"github.com/dece2183/yamusic-tui/log"
 	"github.com/dece2183/yamusic-tui/ui/components/playlist"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type LoadingMsg uint
@@ -48,6 +52,7 @@ func (m *Model) initialLoad() {
 	var (
 		wg                     sync.WaitGroup
 		myWaveMenuBlock        menuBlock
+		radioStationsMenuBlock menuBlock
 		localTracksMenuBlock   menuBlock
 		likedTracksMenuBlock   menuBlock
 		likedAlbumsMenuBlock   menuBlock
@@ -55,8 +60,9 @@ func (m *Model) initialLoad() {
 		userPlaylistsMenuBlock menuBlock
 	)
 
-	wg.Add(6)
+	wg.Add(7)
 	go m.loadMyWave(&wg, &myWaveMenuBlock)
+	go m.loadRadioStations(&wg, &radioStationsMenuBlock)
 	go m.loadLocalTracks(&wg, &localTracksMenuBlock)
 	go m.loadLikedTracks(&wg, &likedTracksMenuBlock)
 	go m.loadLikedAlbums(&wg, &likedAlbumsMenuBlock)
@@ -83,6 +89,17 @@ func (m *Model) initialLoad() {
 	} else {
 		log.Print(log.LVL_ERROR, "failed to list cached tracks: %s", localTracksMenuBlock.err)
 		m.tracker.ShowError("cache list")
+	}
+
+	m.playlists.InsertItem(-1, playlist.ItemEmpty())
+	m.playlists.InsertItem(-1, playlist.ItemCategory("radio:"))
+	if radioStationsMenuBlock.err == nil {
+		for _, item := range radioStationsMenuBlock.items {
+			m.playlists.InsertItem(-1, item)
+		}
+	} else {
+		log.Print(log.LVL_ERROR, "failed to obtain radio stations: %s", radioStationsMenuBlock.err)
+		m.tracker.ShowError("radio stations")
 	}
 
 	m.playlists.InsertItem(-1, playlist.ItemEmpty())
@@ -345,5 +362,67 @@ func rotorSettingsFor(stationStr string) *api.RotorSettings {
 		Diversity: s.Diversity,
 		Mood:      s.Mood,
 		Energy:    s.Energy,
+	}
+}
+
+// loadRadioStations fetches the rotor radio station list (genres/moods/
+// activities). Each station's rotor session starts lazily on first play, so the
+// sessions themselves are not created here.
+func (m *Model) loadRadioStations(wg *sync.WaitGroup, block *menuBlock) {
+	defer wg.Done()
+
+	if m.client == nil {
+		return
+	}
+
+	stations, err := m.client.Stations(stationLanguage())
+	if err != nil {
+		block.err = err
+		return
+	}
+
+	for i := range stations {
+		st := stations[i].Station
+		if st.Id == api.MyWaveId {
+			continue // My Wave already gets its own entry
+		}
+		block.items = append(block.items, &playlist.Item{
+			Name:      st.Name,
+			Kind:      playlist.STATION,
+			StationId: st.Id,
+			Active:    true,
+			Subitem:   true,
+			Rotor:     true,
+		})
+	}
+}
+
+// stationLanguage picks the language for the rotor station list from the locale.
+func stationLanguage() string {
+	for _, name := range []string{"LC_ALL", "LANG", "LANGUAGE"} {
+		v := strings.ToLower(os.Getenv(name))
+		if v == "" {
+			continue
+		}
+		if i := strings.IndexAny(v, "_.@:"); i > 0 {
+			v = v[:i]
+		}
+		if len(v) >= 2 {
+			return v[:2]
+		}
+	}
+	return "ru"
+}
+
+// startStation kicks off a rotor session for the given station (network I/O, so
+// it runs as a Cmd) and reports back via stationStartedMsg.
+func (m *Model) startStation(stationId api.StationId) tea.Cmd {
+	if m.client == nil {
+		return nil
+	}
+	client := m.client
+	return func() tea.Msg {
+		tracks, err := client.RotorNewSession(stationId, rotorSettingsFor(stationId.String()))
+		return stationStartedMsg{stationId: stationId, tracks: tracks, err: err}
 	}
 }
