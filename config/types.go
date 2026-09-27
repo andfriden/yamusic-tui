@@ -107,17 +107,18 @@ type Controls struct {
 	TracksBack               *Key `yaml:"tracks-back"`
 	TracksHide               *Key `yaml:"tracks-hide"`
 	// Player control
-	PlayerPause          *Key `yaml:"player-pause"`
-	PlayerNext           *Key `yaml:"player-next"`
-	PlayerPrevious       *Key `yaml:"player-previous"`
-	PlayerRewindForward  *Key `yaml:"player-rewind-forward"`
-	PlayerRewindBackward *Key `yaml:"player-rewind-backward"`
-	PlayerLike           *Key `yaml:"player-like"`
-	PlayerCache          *Key `yaml:"player-cache"`
-	PlayerVolUp          *Key `yaml:"player-vol-up"`
-	PlayerVolDown        *Key `yaml:"player-vol-down"`
-	PlayerToggleLyrics   *Key `yaml:"player-toggle-lyrics"`
-	PlayerHide           *Key `yaml:"player-hide"`
+	PlayerPause            *Key `yaml:"player-pause"`
+	PlayerNext             *Key `yaml:"player-next"`
+	PlayerPrevious         *Key `yaml:"player-previous"`
+	PlayerRewindForward    *Key `yaml:"player-rewind-forward"`
+	PlayerRewindBackward   *Key `yaml:"player-rewind-backward"`
+	PlayerLike             *Key `yaml:"player-like"`
+	PlayerCache            *Key `yaml:"player-cache"`
+	PlayerVolUp            *Key `yaml:"player-vol-up"`
+	PlayerVolDown          *Key `yaml:"player-vol-down"`
+	PlayerToggleLyrics     *Key `yaml:"player-toggle-lyrics"`
+	PlayerToggleVisualizer *Key `yaml:"player-toggle-visualizer"`
+	PlayerHide             *Key `yaml:"player-hide"`
 }
 
 type Search struct {
@@ -151,6 +152,7 @@ type Config struct {
 	VolumeStep     float64                  `yaml:"volume-step"`
 	SuppressErrors bool                     `yaml:"suppress-errors"`
 	ShowLyrics     bool                     `yaml:"show-lyrics"`
+	ShowVisualizer bool                     `yaml:"show-visualizer"`
 	CacheTracks    CacheType                `yaml:"cache-tracks"`
 	CacheDir       string                   `yaml:"cache-dir"`
 	Proxy          string                   `yaml:"proxy"`
@@ -207,6 +209,7 @@ var defaultConfig = Config{
 		PlayerRewindBackward:     NewKey("ctrl+left"),
 		PlayerLike:               NewKey("L"),
 		PlayerToggleLyrics:       NewKey("t"),
+		PlayerToggleVisualizer:   NewKey("v"),
 		PlayerCache:              NewKey("S"),
 		PlayerVolUp:              NewKey("+,="),
 		PlayerVolDown:            NewKey("-"),

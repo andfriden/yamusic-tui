@@ -36,6 +36,7 @@ const (
 	CACHE_TRACK
 	BUFFERING_COMPLETE
 	TOGGLE_LYRICS
+	TOGGLE_VISUALIZER
 	TOGGLE_VIEW
 )
 
@@ -49,20 +50,31 @@ const (
 	_VOLUME_FADE_STEPS     = 2
 	_VOLUME_SNAP_THRESHOLD = 0.005 // snap to 0/1 when close enough
 	_VOLUME_FADE_PERIOD    = 60 * time.Millisecond
+
+	_MARQUEE_GAP             = 4 // spaces between the end and the wrapped-around start
+	_MARQUEE_FRAMES_PER_STEP = 4 // advance one column every N playback frames (~7 cols/s at 30fps)
+
+	_VIZ_MARGIN     = 4    // sidebar/border padding subtracted from width for the visualizer
+	_VIZ_PEAK_DECAY = 0.97 // per-frame decay of the auto-gain peak so it tracks quieter passages
+	_VIZ_MIN_PEAK   = 0.5  // floor for the peak, so silence/near-silence doesn't blow up to full bars
+	_VIZ_ATTACK     = 0.55 // how fast a bar rises toward a louder target
+	_VIZ_DECAY      = 0.22 // how fast a bar falls toward a quieter target
 )
 
 type Model struct {
-	width      int
-	track      api.Track
-	lyrics     []api.LyricPair
-	progress   progress.Model
-	volumeBar  progress.Model
-	help       help.Model
-	helpMap    *helpKeyMap
-	Hidden     bool
-	showLyrics bool
-	showError  bool
-	errorText  string
+	width          int
+	track          api.Track
+	lyrics         []api.LyricPair
+	textLyrics     []string
+	progress       progress.Model
+	volumeBar      progress.Model
+	help           help.Model
+	helpMap        *helpKeyMap
+	Hidden         bool
+	showLyrics     bool
+	showVisualizer bool
+	showError      bool
+	errorText      string
 
 	paused         bool
 	playtime       time.Duration
@@ -71,9 +83,15 @@ type Model struct {
 	volumeIncremet float64
 	lastVolumeKey  time.Time
 	rewindAmount   time.Duration
-	playerContext  *oto.Context
-	player         *oto.Player
-	trackWrapper   *readWrapper
+	animTick       uint64 // monotonic frame counter advanced each ProgressControl, drives the now-playing marquee
+
+	vizBars       []float64 // smoothed spectrum bar levels [0,1] drawn by the visualizer
+	vizPCM        []float64 // reusable scratch for the latest PCM window
+	vizRe, vizIm  []float64 // reusable FFT scratch (allocated once, sized _VIZ_FFT_SIZE)
+	vizPeak       float64   // decaying magnitude peak, for auto-gain normalization
+	playerContext *oto.Context
+	player        *oto.Player
+	trackWrapper  *readWrapper
 
 	program  *tea.Program
 	likesMap *map[string]bool
@@ -81,15 +99,16 @@ type Model struct {
 
 func New(p *tea.Program, likesMap *map[string]bool) *Model {
 	m := &Model{
-		program:    p,
-		likesMap:   likesMap,
-		progress:   progress.New(),
-		volumeBar:  progress.New(),
-		help:       help.New(),
-		helpMap:    newHelpMap(),
-		paused:     true,
-		volume:     config.Current.Volume,
-		showLyrics: config.Current.ShowLyrics,
+		program:        p,
+		likesMap:       likesMap,
+		progress:       progress.New(),
+		volumeBar:      progress.New(),
+		help:           help.New(),
+		helpMap:        newHelpMap(),
+		paused:         true,
+		volume:         config.Current.Volume,
+		showLyrics:     config.Current.ShowLyrics,
+		showVisualizer: config.Current.ShowVisualizer,
 	}
 
 	m.volumeIncremet = m.volume / _VOLUME_FADE_STEPS
@@ -107,6 +126,7 @@ func New(p *tea.Program, likesMap *map[string]bool) *Model {
 
 	m.help.Ellipsis = "…"
 	m.trackWrapper = &readWrapper{program: m.program}
+	m.trackWrapper.vizEnabled.Store(config.Current.ShowVisualizer)
 
 	op := &oto.NewContextOptions{
 		SampleRate:   44100,
@@ -167,6 +187,10 @@ func (m *Model) View() string {
 
 	if m.showLyrics {
 		tracker = lipgloss.JoinVertical(lipgloss.Left, m.renderLyrics(), "", tracker)
+	}
+
+	if m.showVisualizer {
+		tracker = lipgloss.JoinVertical(lipgloss.Left, m.renderVisualizer(), "", tracker)
 	}
 
 	if m.showError && !config.Current.SuppressErrors {
@@ -297,6 +321,9 @@ func (m *Model) Update(message tea.Msg) (*Model, tea.Cmd) {
 		case controls.PlayerToggleLyrics.Contains(keypress):
 			m.SetLirycs(!m.showLyrics)
 			cmds = append(cmds, model.Cmd(TOGGLE_LYRICS))
+		case controls.PlayerToggleVisualizer.Contains(keypress):
+			m.SetVisualizer(!m.showVisualizer)
+			cmds = append(cmds, model.Cmd(TOGGLE_VISUALIZER))
 		case controls.PlayerHide.Contains(keypress):
 			m.Hidden = !m.Hidden
 			cmds = append(cmds, model.Cmd(TOGGLE_VIEW))
@@ -315,6 +342,11 @@ func (m *Model) Update(message tea.Msg) (*Model, tea.Cmd) {
 
 	// track progress update
 	case ProgressControl:
+		m.volumeFadeTick()
+		m.animTick++
+		if m.showVisualizer {
+			m.updateVisualizer()
+		}
 		cmd = m.progress.SetPercent(msg.Value())
 		cmds = append(cmds, cmd)
 
@@ -341,6 +373,9 @@ func (m *Model) Height() int {
 	baseHeight := 4
 	if m.showLyrics {
 		baseHeight += 4
+	}
+	if m.showVisualizer {
+		baseHeight += _VIZ_HEIGHT + 1 // panel rows + spacer
 	}
 	if m.showError && !config.Current.SuppressErrors {
 		baseHeight += 2
@@ -371,6 +406,13 @@ func (m *Model) SetVolume(v float64) {
 func (m *Model) SetLirycs(show bool) {
 	m.showLyrics = show
 	config.Current.ShowLyrics = m.showLyrics
+	config.Save()
+}
+
+func (m *Model) SetVisualizer(show bool) {
+	m.showVisualizer = show
+	m.trackWrapper.vizEnabled.Store(show) // let the audio thread skip the PCM tap when off
+	config.Current.ShowVisualizer = m.showVisualizer
 	config.Save()
 }
 
@@ -417,6 +459,10 @@ func (m *Model) Stop() {
 	m.player = nil
 	m.playtime += time.Since(m.playStarted)
 	m.paused = true
+
+	// No more PCM will arrive — settle the visualizer to silence instead of
+	// freezing on the last frame.
+	m.resetVisualizer()
 }
 
 func (m *Model) IsPlaying() bool {
@@ -455,6 +501,9 @@ func (m *Model) Pause() {
 	}
 	m.playtime += time.Since(m.playStarted)
 	m.paused = true
+	// Playback ticks (which drive the visualizer) are about to stop — settle the
+	// spectrum to silence instead of freezing.
+	m.resetVisualizer()
 }
 
 func (m *Model) Rewind(amount time.Duration) tea.Cmd {
@@ -607,6 +656,116 @@ func (m *Model) tryGetLyricsLine(idx int) (line string) {
 		return
 	}
 	return m.lyrics[idx].Line
+}
+
+func (m *Model) tryGetTextLine(idx int) string {
+	if idx < 0 || idx >= len(m.textLyrics) {
+		return " "
+	}
+	return m.textLyrics[idx]
+}
+
+// marquee returns a width-wide slice of text. When text fits it is right-padded
+// with spaces; when it is longer than width it scrolls horizontally, advancing
+// with tick and wrapping around through a small gap. Slicing is rune-based, so
+// it assumes single-width glyphs (true for latin/cyrillic titles).
+func marquee(text string, width int, tick uint64) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= width {
+		return text + strings.Repeat(" ", width-len(runes))
+	}
+	period := len(runes) + _MARQUEE_GAP
+	offset := int((tick / _MARQUEE_FRAMES_PER_STEP) % uint64(period))
+	buf := make([]rune, 0, len(runes)+_MARQUEE_GAP+width)
+	buf = append(buf, runes...)
+	for i := 0; i < _MARQUEE_GAP; i++ {
+		buf = append(buf, ' ')
+	}
+	buf = append(buf, runes...) // wrap-around source for the tail window
+	return string(buf[offset : offset+width])
+}
+
+func (m *Model) vizCols() int {
+	cols := m.width - _VIZ_MARGIN
+	if cols < 0 {
+		return 0
+	}
+	return cols
+}
+
+// updateVisualizer pulls the latest decoded PCM window, computes a log-frequency
+// spectrum, normalizes it with a decaying-peak auto-gain (so the bars fill the
+// panel regardless of loudness), and eases the result into m.vizBars. Driven by
+// ProgressControl, so it only runs while audio is actually playing.
+func (m *Model) updateVisualizer() {
+	cols := m.vizCols()
+	if cols <= 0 {
+		return
+	}
+	m.vizPCM = m.trackWrapper.latestPCM(m.vizPCM)
+	if m.vizRe == nil {
+		m.vizRe = make([]float64, _VIZ_FFT_SIZE)
+		m.vizIm = make([]float64, _VIZ_FFT_SIZE)
+	}
+	mags := spectrumInto(m.vizPCM, cols, m.vizRe, m.vizIm)
+
+	maxMag := 0.0
+	for _, v := range mags {
+		if v > maxMag {
+			maxMag = v
+		}
+	}
+	m.vizPeak *= _VIZ_PEAK_DECAY
+	if maxMag > m.vizPeak {
+		m.vizPeak = maxMag
+	}
+	if m.vizPeak < _VIZ_MIN_PEAK {
+		m.vizPeak = _VIZ_MIN_PEAK
+	}
+
+	if len(m.vizBars) != cols {
+		m.vizBars = make([]float64, cols)
+	}
+	for i, v := range mags {
+		target := v / m.vizPeak
+		if target > 1 {
+			target = 1
+		}
+		// Rise quickly to a louder target, fall back more gently.
+		if target > m.vizBars[i] {
+			m.vizBars[i] += (target - m.vizBars[i]) * _VIZ_ATTACK
+		} else {
+			m.vizBars[i] += (target - m.vizBars[i]) * _VIZ_DECAY
+		}
+	}
+}
+
+// renderVisualizer draws the smoothed spectrum as an accent-colored panel of a
+// fixed height (_VIZ_HEIGHT rows) so toggling it or pausing never jitters the
+// layout. When the terminal is too narrow to draw any bars it still emits a
+// _VIZ_HEIGHT-row blank block so the panel height — and thus Height() — stays
+// constant.
+func (m *Model) renderVisualizer() string {
+	cols := m.vizCols()
+	if cols <= 0 {
+		return strings.Repeat("\n", _VIZ_HEIGHT-1)
+	}
+	bars := make([]float64, cols)
+	copy(bars, m.vizBars) // surplus entries stay 0; a larger m.vizBars is clipped
+	panel := renderSpectrum(bars, _VIZ_HEIGHT)
+	return lipgloss.NewStyle().Foreground(style.AccentColor).Render(panel)
+}
+
+// resetVisualizer settles the spectrum to silence (no PCM is arriving), used on
+// pause and stop so the bars don't freeze on their last frame.
+func (m *Model) resetVisualizer() {
+	for i := range m.vizBars {
+		m.vizBars[i] = 0
+	}
+	m.vizPeak = 0
 }
 
 func (m *Model) lyricsBreak(line string) (newLine string) {
