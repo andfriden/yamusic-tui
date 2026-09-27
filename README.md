@@ -167,6 +167,40 @@ including kitty, Alacritty, WezTerm, xterm and Konsole; `screen` and `tmux`
 do not). When the query fails, or when the flag is off, the configured hex
 values are used unchanged.
 
+### Radio configuration
+
+Select **my wave** in the sidebar and press `c` (`station-config` in the
+controls) to open the station settings dialog. You can adjust four rotor
+station parameters:
+
+- `language` — track language (`any` / `not-russian` / `russian`; empty = server default)
+- `diversity` — how varied the rotation is (`default` / `moderate` / `high` / `off`)
+- `mood` — 0.0..1.0, calm vs upbeat
+- `energy` — 0.0..1.0
+
+> `mood`/`energy` of exactly `0.0` means "not set" (server default); the dialog
+> starts at `0.10`, so a deliberate zero is not sendable via the UI.
+
+Navigate with the cursor keys, change a value with `left`/`right`, confirm with
+`apply` and cancel with `cancel`. The settings are saved to `config.yaml`
+under the station's `type:tag` key (or a shared `default` entry) and applied the
+next time the station's rotor session starts.
+
+```yaml
+radio:
+   'user:onyourwave':
+      language: russian
+      diversity: high
+      mood: 0.5
+      energy: 0.25
+   default: # applies to every station without its own block
+      language: not-russian
+```
+
+> Note: the settings are sent to the Yandex rotor API as the `settings2` field
+> when a station's session is started. They tune the rotation's language and
+> variety; exact server behaviour may vary.
+
 ## System media controls
 
 ![win11-smtc-example](.assets/smtc-win11.png)
