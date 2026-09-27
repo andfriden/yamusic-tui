@@ -81,6 +81,7 @@ type Model struct {
 	playStarted    time.Time
 	volume         float64
 	volumeIncremet float64
+	volumeBarShown float64 // eased value the volume bar is drawn at (lerps toward volume)
 	lastVolumeKey  time.Time
 	rewindAmount   time.Duration
 	animTick       uint64 // monotonic frame counter advanced each ProgressControl, drives the now-playing marquee
@@ -177,7 +178,7 @@ func (m *Model) View() string {
 		} else {
 			volumeIcon = style.IconVolumeHigh
 		}
-		volumeIndicator = " " + volumeIcon + " " + m.volumeBar.ViewAs(m.volume)
+		volumeIndicator = " " + volumeIcon + " " + m.volumeBar.ViewAs(m.volumeBarShown)
 		volumeIndicatorWidth = lipgloss.Width(volumeIndicator)
 	}
 
@@ -232,11 +233,20 @@ func (m *Model) View() string {
 		trackAddInfo := style.TrackAddInfoStyle.Render(trackLike + trackTime)
 		addInfoLen := lipgloss.Width(trackAddInfo)
 		maxLen := m.Width() - addInfoLen - 4
-		stl := lipgloss.NewStyle().MaxWidth(maxLen - 1)
 
 		trackTitleLen := lipgloss.Width(trackTitle)
 		if trackTitleLen > maxLen {
-			trackTitle = stl.Render(trackTitle) + "…"
+			// Too long to fit — scroll it instead of truncating. The marquee
+			// renders from the raw title+version so it can wrap around cleanly.
+			rawTitle := m.track.Title
+			if m.track.Version != "" {
+				rawTitle += " " + m.track.Version
+			}
+			titleStyle := style.TrackTitleStyle
+			if !m.track.Available {
+				titleStyle = titleStyle.Strikethrough(true)
+			}
+			trackTitle = titleStyle.MaxWidth(maxLen).Render(marquee(rawTitle, maxLen, m.animTick))
 		} else if trackTitleLen < maxLen {
 			trackTitle += strings.Repeat(" ", maxLen-trackTitleLen)
 		}
@@ -244,7 +254,7 @@ func (m *Model) View() string {
 		trackArtist := style.TrackArtistStyle.Render(helpers.ArtistList(m.track.Artists))
 		trackArtistLen := lipgloss.Width(trackArtist)
 		if trackArtistLen > maxLen {
-			trackArtist = stl.Render(trackArtist) + "…"
+			trackArtist = style.TrackArtistStyle.MaxWidth(maxLen).Render(marquee(helpers.ArtistList(m.track.Artists), maxLen, m.animTick))
 		} else if trackArtistLen < maxLen {
 			trackArtist += strings.Repeat(" ", maxLen-trackArtistLen)
 		}
@@ -343,6 +353,7 @@ func (m *Model) Update(message tea.Msg) (*Model, tea.Cmd) {
 	// track progress update
 	case ProgressControl:
 		m.volumeFadeTick()
+		m.volumeBarTick()
 		m.animTick++
 		if m.showVisualizer {
 			m.updateVisualizer()
@@ -399,8 +410,25 @@ func (m *Model) SetVolume(v float64) {
 	}
 	m.volume = v
 	m.volumeIncremet = m.volume / _VOLUME_FADE_STEPS
+	// The volume bar eases toward m.volume on the playback tick; when nothing is
+	// playing there is no tick to animate it, so snap it for immediate feedback.
+	if m.player == nil || m.paused {
+		m.volumeBarShown = m.volume
+	}
 	config.Current.Volume = m.volume
 	config.Save()
+}
+
+// volumeBarTick eases the drawn volume level toward the target volume. Called on
+// the playback tick so a volume change glides instead of snapping.
+func (m *Model) volumeBarTick() {
+	const ease = 0.3
+	diff := m.volume - m.volumeBarShown
+	if diff < 0.002 && diff > -0.002 {
+		m.volumeBarShown = m.volume
+		return
+	}
+	m.volumeBarShown += diff * ease
 }
 
 func (m *Model) SetLirycs(show bool) {
@@ -424,6 +452,7 @@ func (m *Model) StartTrack(track *api.Track, reader *stream.BufferedStream, lyri
 	m.showError = false
 	m.volume = config.Current.Volume
 	m.volumeIncremet = m.volume / _VOLUME_FADE_STEPS
+	m.volumeBarShown = m.volume
 
 	if m.player != nil {
 		m.Stop()
@@ -501,9 +530,10 @@ func (m *Model) Pause() {
 	}
 	m.playtime += time.Since(m.playStarted)
 	m.paused = true
-	// Playback ticks (which drive the visualizer) are about to stop — settle the
-	// spectrum to silence instead of freezing.
+	// Playback ticks (which drive the visualizer and the eased volume bar) are
+	// about to stop — settle the spectrum to silence and land the bar on target.
 	m.resetVisualizer()
+	m.volumeBarShown = m.volume
 }
 
 func (m *Model) Rewind(amount time.Duration) tea.Cmd {

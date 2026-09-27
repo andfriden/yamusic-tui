@@ -2,4 +2,5 @@
 *.exe
 yamusic
 yamusic-tui
-.idea/
+yamusic-tui-linux-x86_64
+yamusic-tui-linux-x86_64.tar.gz
